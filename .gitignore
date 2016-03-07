@@ -1,0 +1,48 @@
+# Java
+**/*.class
+**/*.jar
+**/*.war
+**/*.ear
+
+# Eclipse
+**/.project
+**/.classpath
+**/.settings
+**/.factorypath
+
+# Idea
+**/.idea
+*.iml
+**/*.iml
+*.iws
+*.ipr
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Gradle
+.gradle
+!gradle-wrapper.jar
+**/.gradle
+**/!gradle-wrapper.jar
+
+# Maven
+target
+**/target
+
+# Build
+out
+build
+bin
+**/out
+**/build
+**/bin
+
+# Other
+*.log
+*.swp
+*.bak
+**/*.log
+**/*.swp
+**/*.bak

@@ -1,0 +1,231 @@
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+
+    apply from: file('gradle/buildScript.gradle'), to: buildscript
+}
+
+apply plugin: 'java'
+apply plugin: 'maven'
+apply plugin: 'eclipse'
+apply plugin: 'idea'
+apply plugin: 'project-report'
+
+group 'com.amazonaws'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+project.ext {
+    aspectjVersion = "1.8.7"
+    awsSdkVersion = "1.10.48"
+    awsFlowBuildToolsVersion = "1.10.46"
+}
+
+gradle.projectsEvaluated {
+    tasks.withType(JavaCompile) {
+        options.compilerArgs << "-Xlint:unchecked" << "-Xlint:deprecation"
+    }
+}
+
+repositories {
+    mavenLocal()
+    mavenCentral()
+    maven {
+        url "/home/inatomi/.m2/repository"
+    }
+}
+
+// Encoding
+def defaultEncoding = 'UTF-8'
+[compileJava, compileTestJava]*.options*.encoding = defaultEncoding
+
+configurations {
+    provided
+    ajc
+    aspects
+    aspectCompile
+    ajInpath
+    aspectjWeaver
+
+    compile.extendsFrom(provided)
+    compile.extendsFrom(aspects)
+}
+
+apply plugin: 'aspectj'
+
+dependencies {
+    // lombok
+    provided "org.projectlombok:lombok:1.16.6"
+
+    def log4jVersion = '2.5'
+    compile(
+            'com.lmax:disruptor:3.3.4',
+            "org.apache.logging.log4j:log4j-jcl:${log4jVersion}",
+            "org.apache.logging.log4j:log4j-slf4j-impl:${log4jVersion}",
+            "org.apache.logging.log4j:log4j-1.2-api:${log4jVersion}",
+            "org.apache.logging.log4j:log4j-api:${log4jVersion}",
+            "org.apache.logging.log4j:log4j-core:${log4jVersion}"
+    )
+
+    // jackson
+    def jackson_version = '2.6.4'
+    compile (
+            "com.fasterxml.jackson.core:jackson-core:${jackson_version}",
+            "com.fasterxml.jackson.core:jackson-databind:${jackson_version}",
+            "com.fasterxml.jackson.core:jackson-annotations:${jackson_version}"
+    )
+
+    // Spring context
+    def springVersion = '4.1.9.RELEASE'
+    compile "org.springframework:spring-context:${springVersion}"
+    compile "org.springframework:spring-beans:${springVersion}"
+    compile "org.springframework:spring-core:${springVersion}"
+    testCompile "org.springframework:spring-test:${springVersion}"
+
+    compile (
+            // aws-java-sdkではなく必要なものに絞る。
+            "com.amazonaws:aws-java-sdk-s3:${awsSdkVersion}",
+            "com.amazonaws:aws-java-sdk-simpleworkflow:${awsSdkVersion}",
+            "com.amazonaws:aws-java-sdk-swf-libraries:${awsSdkVersion}",
+            "com.amazonaws:aws-java-sdk-flow-build-tools:${awsFlowBuildToolsVersion}",
+            'org.apache.commons:commons-lang3:3.4',
+            'org.freemarker:freemarker:2.3.23',
+            "org.aspectj:aspectjrt:${aspectjVersion}"
+    )
+    ajc "org.aspectj:aspectjtools:${aspectjVersion}"
+    aspects "com.amazonaws:aws-java-sdk-flow-build-tools:${awsFlowBuildToolsVersion}"
+
+    aspectjWeaver "org.aspectj:aspectjweaver:${aspectjVersion}"
+    aspectpath "com.amazonaws:aws-java-sdk-flow-build-tools:${awsFlowBuildToolsVersion}"
+
+    // unit test
+    testCompile 'junit:junit:4.11'
+}
+
+sourceSets {
+    main.compileClasspath += configurations.provided
+    test.compileClasspath += configurations.provided
+    test.runtimeClasspath += configurations.provided
+
+    // source directories
+    main.resources.srcDirs += "src/main/resources"
+
+    generated.java.srcDirs = ["${buildDir}/generated"]
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
+javadoc {
+    if (JavaVersion.current().isJava8Compatible()) {
+        options.addStringOption('Xdoclint:none', '-quiet')
+    }
+}
+
+task javadocJar(type: Jar, dependsOn: javadoc) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+artifacts {
+    archives sourcesJar
+    archives javadocJar
+}
+
+task generateSources(type: JavaCompile, group: 'build', description: 'Generates simple workflow sources.') {
+    source = sourceSets.main.java
+    classpath = configurations.compile
+    options.compilerArgs = ['-proc:none',
+                            '-processor',
+                            'com.amazonaws.eclipse.simpleworkflow.asynchrony.annotationprocessor.AsynchronyDeciderAnnotationProcessor']
+    options.warnings = false
+    destinationDir = file("${buildDir}/generated")
+    outputs.dir destinationDir
+}
+
+compileJava {
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
+
+    doLast {
+        ant.mkdir(dir: "${projectDir}/src/main/generated")
+        ant.taskdef(resource:"org/aspectj/tools/ant/taskdefs/aspectjTaskdefs.properties", classpath: configurations.ajc.asPath)
+        ant.iajc(
+                source:sourceCompatibility,
+                target:targetCompatibility,
+                destDir: "${buildDir}/generated",
+                showWeaveInfo: 'true',
+                maxmem:   "1024m",
+                fork:     "true",
+                failonerror: "false",
+                inpath:   configurations.ajInpath.asPath,
+                aspectPath:configurations.aspects.asPath,
+                sourceRootCopyFilter:"**/.git/*,**/*.java",
+                classpath:"${configurations.compile.asPath};${configurations.aspectCompile.asPath}"){
+            sourceroots{
+                sourceSets.main.java.srcDirs.each{
+                    pathelement(location:it.absolutePath)
+                }
+            }
+        }
+        ant.move(file: "${projectDir}/com", tofile: "${projectDir}/src/main/generated/com")
+        delete fileTree(dir: "${project.buildDir}/classes", include: "**/*.java")
+    }
+}
+
+compileTestJava {
+    sourceCompatibility = "1.8"
+    targetCompatibility = "1.8"
+}
+
+test {
+    // enable junit()
+    useJUnit()
+    // show standard out and standard error of the test JVM(s) on the console
+    testLogging.showStandardStreams = true
+    // jvm args
+    jvmArgs "-javaagent:${configurations.aspectjWeaver.asPath}"
+    // set heap size for the test JVM(s)
+    minHeapSize = "128m"
+    maxHeapSize = "512m"
+}
+
+compileJava.source
+
+eclipse.classpath {
+    plusConfigurations += [configurations.provided]
+}
+
+idea {
+    project {
+        ipr {
+            withXml {
+                def node = it.asNode()
+                node.component.find {it.@name == 'CompilerConfiguration'} ['annotationProcessing'][0].replaceNode {
+                    annotationProcessing {
+                        profile(default: true, name: 'Default', useClasspath: 'true', enabled: true)
+                    }
+                }
+            }
+        }
+    }
+    module {
+        // for lombok
+        scopes.PROVIDED.plus += [configurations.provided]
+        sourceDirs += file("${projectDir}/src/main/generated")
+        //if you love browsing Javadoc
+        downloadJavadoc = true
+        //and hate reading sources :)
+        downloadSources = true
+    }
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.10'
+}
